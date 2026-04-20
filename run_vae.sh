@@ -42,6 +42,8 @@ python "$REPO/train_vae.py" \
     --w_l1 1.0 \
     --w_perc 0.1 \
     --w_edge 0.5 \
+    --w_palette 0.5 \
+    --palette_k 16 \
     --save_interval 2000 \
     --log_interval 50 \
     --gpu "$GPU"

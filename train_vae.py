@@ -52,6 +52,42 @@ class PerceptualLoss(nn.Module):
         return F.l1_loss(self.vgg(p), self.vgg(t))
 
 
+def palette_adhesion_loss(pred: torch.Tensor, palette: torch.Tensor) -> torch.Tensor:
+    """
+    Soft constraint: each output pixel should be close to its nearest palette color.
+
+    Args:
+        pred:    (B, 3, H, W)  in [-1, 1]
+        palette: (B, K, 3)     in [0, 1]
+    Returns:
+        scalar mean nearest-color distance.
+
+    Implementation: ||p - c||² = ||p||² + ||c||² - 2·p·c (avoids materialising the
+    (B, H, W, K, 3) difference tensor).
+
+    White (1,1,1) is appended to the palette since the cel art was composited on
+    a white background — without it, the loss would penalise the background.
+    """
+    B = pred.shape[0]
+    p = (pred + 1) / 2                          # → [0, 1]
+    p = p.permute(0, 2, 3, 1).contiguous()      # (B, H, W, 3)
+
+    white = torch.ones(B, 1, 3, device=palette.device, dtype=palette.dtype)
+    palette = torch.cat([palette, white], dim=1)  # (B, K+1, 3)
+
+    p_sq = (p * p).sum(dim=-1)                  # (B, H, W)
+    c_sq = (palette * palette).sum(dim=-1)      # (B, K+1)
+    pc = torch.einsum("bhwc,bkc->bhwk", p, palette)  # (B, H, W, K+1)
+
+    sq_dists = p_sq.unsqueeze(-1) + c_sq[:, None, None, :] - 2 * pc
+    sq_dists = sq_dists.clamp(min=0)            # numerical safety
+    min_sq = sq_dists.min(dim=-1).values        # (B, H, W)
+    # Use squared distance (no sqrt). Gradient of sqrt blows up near zero — at
+    # initialization the pretrained VAE already reproduces palette colors well,
+    # so distances are tiny and `1/(2*sqrt(d))` produces NaN gradients.
+    return min_sq.mean()
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -70,6 +106,9 @@ def parse_args():
     parser.add_argument("--w_l1", type=float, default=1.0)
     parser.add_argument("--w_perc", type=float, default=0.1)
     parser.add_argument("--w_edge", type=float, default=0.5)
+    parser.add_argument("--w_palette", type=float, default=0.3,
+                        help="Weight for palette adhesion loss (pushes pixels onto cel palette)")
+    parser.add_argument("--palette_k", type=int, default=16)
     parser.add_argument("--save_interval", type=int, default=1000)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--gpu", type=int, default=0)
@@ -100,6 +139,7 @@ def main():
         num_frames=args.num_frames,
         height=args.height,
         width=args.width,
+        palette_k=args.palette_k,
         augment=True,
     )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
@@ -141,7 +181,15 @@ def main():
         perc = perc_loss_fn(recon_flat.clamp(-1, 1), target_flat)
         edge = F.l1_loss(sobel(recon_flat), sobel(target_flat))
 
-        loss = args.w_l1 * l1 + args.w_perc * perc + args.w_edge * edge
+        if args.w_palette > 0:
+            palette = batch["palette"].to(device)  # (B, K, 3) [0,1]
+            # Replicate palette per time-step to align with recon_flat (B*T, 3, H, W)
+            palette_bt = palette.unsqueeze(1).expand(-1, T, -1, -1).reshape(B * T, -1, 3)
+            pal = palette_adhesion_loss(recon_flat.clamp(-1, 1), palette_bt)
+        else:
+            pal = torch.zeros((), device=device)
+
+        loss = args.w_l1 * l1 + args.w_perc * perc + args.w_edge * edge + args.w_palette * pal
 
         optimizer.zero_grad()
         loss.backward()
@@ -150,11 +198,12 @@ def main():
         scheduler.step()
 
         if step % args.log_interval == 0:
-            print(f"step {step:5d} | loss {loss.item():.4f} | l1 {l1.item():.4f} | perc {perc.item():.4f} | edge {edge.item():.4f}")
+            print(f"step {step:5d} | loss {loss.item():.4f} | l1 {l1.item():.4f} | perc {perc.item():.4f} | edge {edge.item():.4f} | pal {pal.item():.4f}")
             writer.add_scalar("loss/total", loss.item(), step)
             writer.add_scalar("loss/l1", l1.item(), step)
             writer.add_scalar("loss/perc", perc.item(), step)
             writer.add_scalar("loss/edge", edge.item(), step)
+            writer.add_scalar("loss/palette", pal.item(), step)
 
         if step % (args.log_interval * 5) == 0:
             with torch.no_grad():
