@@ -182,11 +182,13 @@ def main():
     parser.add_argument("--output_dir", help="For single mode")
     parser.add_argument("--batch", help="Root containing many clip dirs")
     parser.add_argument("--output_root", help="Output root for batch mode")
-    parser.add_argument("--threshold", type=float, default=0.5,
-                        help="Chi-square histogram distance threshold for cut detection")
+    parser.add_argument("--threshold", type=float, default=0.3,
+                        help="Chi-square histogram distance threshold for cut detection. "
+                             "0.3 catches typical anime cuts (verified on TOHO PVs); "
+                             "0.5 misses cuts within visually-similar palette ranges.")
     parser.add_argument("--min_shot_length", type=int, default=17)
-    parser.add_argument("--min_motion", type=float, default=2.0,
-                        help="Mean abs grayscale diff; ~2 filters near-static shots")
+    parser.add_argument("--min_motion", type=float, default=1.5,
+                        help="Mean abs grayscale diff; ~1.5 filters near-static shots")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--copy", action="store_true", help="Copy frames instead of symlinking")
     args = parser.parse_args()
