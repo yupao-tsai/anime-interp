@@ -9,10 +9,13 @@ LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
 CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
 
+# Train on the SAME domain as inference: production cels (RGBA flat-color anime)
+# from BONES/Fantasia-Sango/Trails-of-cold-steel studios.
+# ATD-12K is composited frames with backgrounds — different domain, do NOT use.
 DATA_ROOT="/storage/SSD2/users/ryan/dataset/FlatColorData/GT"
 OUTPUT_DIR=$REPO/runs/vae_finetune
 
-GPU=0
+GPU=1
 LR=1e-4
 TOTAL_STEPS=10000
 BATCH=4
