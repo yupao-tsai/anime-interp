@@ -38,12 +38,57 @@ def smooth_frame(img_bgr: np.ndarray, iterations: int = 2) -> np.ndarray:
     return out
 
 
+def _merge_close_colors(palette: np.ndarray, min_dist: float,
+                        mode: str = "rgb") -> np.ndarray:
+    """Merge palette colors that are too perceptually close.
+
+    Two near-identical palette colors create wavy / fuzzy boundaries because
+    K-means assignment flips between them at the edge. This greedy filter
+    enforces a minimum perceptual distance between any two kept colors.
+
+    mode="rgb":  Euclidean distance in RGB space (recommended, preserves hue).
+                 With threshold 50, isoluminant colors of different hues are
+                 kept as distinct (e.g. warm skin tone vs white shirt).
+    mode="gray": L1 distance in BT.601 luminance only. Stricter — collapses
+                 isoluminant colors. Max ~6 colors at threshold 50.
+
+    Algorithm: greedy keep — sort by brightness, keep each color iff it is
+    >= min_dist from EVERY already-kept color (no transitive chaining).
+    """
+    if len(palette) <= 1 or min_dist <= 0:
+        return palette
+
+    # BGR luminance for the brightness ordering
+    gray = palette @ np.array([0.114, 0.587, 0.299], dtype=np.float32)
+    order = np.argsort(-gray)  # brightest first
+
+    kept_colors = []
+    for idx in order:
+        color = palette[idx]
+        if mode == "gray":
+            g = gray[idx]
+            # Skip if close in grayscale to any kept
+            if all(abs(g - (kc @ np.array([0.114, 0.587, 0.299])).item()) >= min_dist
+                   for kc in kept_colors):
+                kept_colors.append(color)
+        else:  # rgb
+            if all(np.linalg.norm(color - kc) >= min_dist for kc in kept_colors):
+                kept_colors.append(color)
+
+    return np.array(kept_colors, dtype=np.float32)
+
+
 def fit_clip_palette(frame_paths: list, K: int, sample_per_frame: int = 5000,
-                     max_samples: int = 100_000) -> np.ndarray:
+                     max_samples: int = 100_000,
+                     min_color_dist: float = 0.0,
+                     dist_mode: str = "rgb") -> np.ndarray:
     """Fit a single K-color palette across multiple frames of a clip.
 
     We sub-sample pixels from a handful of evenly-spaced frames to keep K-means
     fast. The fitted palette is then applied to ALL frames → temporal stability.
+
+    If `min_gray_diff > 0`, colors whose grayscale difference is below the
+    threshold are merged. The final palette will have ≤ K colors.
     """
     n = len(frame_paths)
     # Sample 5 evenly-spaced frames (or fewer if clip is short)
@@ -67,7 +112,11 @@ def fit_clip_palette(frame_paths: list, K: int, sample_per_frame: int = 5000,
     km = MiniBatchKMeans(n_clusters=K, n_init=3, max_iter=100,
                          batch_size=4096, random_state=0)
     km.fit(pixels)
-    return km.cluster_centers_  # (K, 3) BGR float32
+    palette = km.cluster_centers_.astype(np.float32)  # (K, 3) BGR float32
+
+    if min_color_dist > 0:
+        palette = _merge_close_colors(palette, min_color_dist, mode=dist_mode)
+    return palette
 
 
 def apply_palette_vectorised(img_bgr: np.ndarray, palette: np.ndarray) -> np.ndarray:
@@ -84,7 +133,8 @@ def apply_palette_vectorised(img_bgr: np.ndarray, palette: np.ndarray) -> np.nda
     return snapped.astype(np.uint8)
 
 
-def stylize_clip(input_dir: Path, output_dir: Path, K: int) -> tuple:
+def stylize_clip(input_dir: Path, output_dir: Path, K: int,
+                 min_color_dist: float = 50.0, dist_mode: str = "rgb") -> tuple:
     """Stylize an entire clip with a single shared palette.
 
     Returns:
@@ -102,7 +152,9 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int) -> tuple:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        palette = fit_clip_palette(frame_paths, K=K)
+        palette = fit_clip_palette(frame_paths, K=K,
+                                    min_color_dist=min_color_dist,
+                                    dist_mode=dist_mode)
 
         for fp in frame_paths:
             out_path = output_dir / fp.name
@@ -126,8 +178,9 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int) -> tuple:
 # ── Batch driver ─────────────────────────────────────────────────────────────
 
 def _worker(args):
-    input_dir, out_dir, K = args
-    return stylize_clip(input_dir, out_dir, K=K)
+    input_dir, out_dir, K, min_color_dist, dist_mode = args
+    return stylize_clip(input_dir, out_dir, K=K,
+                        min_color_dist=min_color_dist, dist_mode=dist_mode)
 
 
 def _find_clips_recursive(root: Path) -> list:
@@ -154,20 +207,21 @@ def _find_clips_recursive(root: Path) -> list:
     return clips
 
 
-def batch_stylize(input_root: Path, output_root: Path, K: int, workers: int):
+def batch_stylize(input_root: Path, output_root: Path, K: int,
+                  min_color_dist: float, dist_mode: str, workers: int):
     clips = _find_clips_recursive(input_root)
     print(f"Found {len(clips)} clip directories under {input_root}")
-    print(f"K={K} colors per palette, {workers} parallel workers")
+    print(f"K={K} colors per palette (post-merge: ≤K, mode={dist_mode}, min_dist={min_color_dist})")
+    print(f"{workers} parallel workers")
     print(f"Output: {output_root}")
 
     output_root.mkdir(parents=True, exist_ok=True)
 
-    # Mirror the relative path structure in the output root
     args_list = []
     for c in clips:
         rel = c.relative_to(input_root)
         out_dir = output_root / rel
-        args_list.append((c, out_dir, K))
+        args_list.append((c, out_dir, K, min_color_dist, dist_mode))
 
     ctx = get_context("spawn")
     with ctx.Pool(workers) as pool:
@@ -193,15 +247,26 @@ def main():
     parser.add_argument("--batch", help="Root containing many clip directories")
     parser.add_argument("--output_root", help="Output root for batch mode")
     parser.add_argument("--K", type=int, default=128, help="Palette size per clip")
+    parser.add_argument("--min_color_dist", type=float, default=50.0,
+                        help="Drop palette colors closer than this to any kept color. "
+                             "Default 50 in RGB-Euclidean space ensures any two kept "
+                             "palette colors are visually distinguishable.")
+    parser.add_argument("--dist_mode", choices=["rgb", "gray"], default="rgb",
+                        help="rgb=Euclidean RGB distance (preserves hue diversity); "
+                             "gray=BT.601 luminance only (stricter, ~6 colors max at 50)")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
 
     if args.batch:
         assert args.output_root, "--output_root required for batch mode"
-        batch_stylize(Path(args.batch), Path(args.output_root), K=args.K, workers=args.workers)
+        batch_stylize(Path(args.batch), Path(args.output_root), K=args.K,
+                      min_color_dist=args.min_color_dist, dist_mode=args.dist_mode,
+                      workers=args.workers)
     elif args.input_dir:
         assert args.output_dir, "--output_dir required for single mode"
-        name, n, err = stylize_clip(Path(args.input_dir), Path(args.output_dir), K=args.K)
+        name, n, err = stylize_clip(Path(args.input_dir), Path(args.output_dir),
+                                     K=args.K, min_color_dist=args.min_color_dist,
+                                     dist_mode=args.dist_mode)
         if err:
             print(f"ERROR: {err}")
         else:
