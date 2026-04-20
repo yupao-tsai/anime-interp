@@ -47,7 +47,7 @@ class AnimeClipDataset(Dataset):
         def _scan(directory: Path, depth: int = 0):
             children = sorted(d for d in directory.iterdir() if d.is_dir())
             for subdir in children:
-                frames = sorted(subdir.glob("*.png")) + sorted(subdir.glob("*.jpg"))
+                frames = sorted(subdir.glob("*.png")) + sorted(subdir.glob("*.jpg")) + sorted(subdir.glob("*.tga"))
                 if len(frames) >= self.num_frames:
                     clips.append(frames)
                 elif depth < 1 and not frames:
@@ -58,7 +58,7 @@ class AnimeClipDataset(Dataset):
 
         # Accept flat directory of images as a single clip
         if not clips:
-            frames = sorted(root.glob("*.png")) + sorted(root.glob("*.jpg"))
+            frames = sorted(root.glob("*.png")) + sorted(root.glob("*.jpg")) + sorted(root.glob("*.tga"))
             if len(frames) >= self.num_frames:
                 clips.append(frames)
         return clips

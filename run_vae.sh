@@ -9,10 +9,12 @@ LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
 CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
 
-# Train on the SAME domain as inference: production cels (RGBA flat-color anime)
-# from BONES/Fantasia-Sango/Trails-of-cold-steel studios.
-# ATD-12K is composited frames with backgrounds — different domain, do NOT use.
-DATA_ROOT="/storage/SSD2/users/ryan/dataset/FlatColorData/GT"
+# Combined cel-style anime dataset built via data/build_combined_dataset.py
+# 558 clips / 27,433 frames from 7 studios:
+#   BONES, BONES_2nd, Fantasia-Sango, Trails-of-cold-steel,
+#   StudioSeven, BV_Studio, AnitaDataset
+# Excludes 3D-rendered (AnimeRun_v2) and bare frame collections (XuanYuanSword, FlatColor).
+DATA_ROOT="/storage/SSD3/yptsai/data/cel_combined"
 OUTPUT_DIR=$REPO/runs/vae_finetune
 
 GPU=1
