@@ -40,7 +40,11 @@ DUMMY_PROMPT = "anime cel-shaded animation"
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_path", required=True, help="LTX safetensors or HF dir")
+    parser.add_argument(
+        "--ckpt_path",
+        default="/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors",
+        help="LTX safetensors or HF dir",
+    )
     parser.add_argument("--text_encoder_path", default="PixArt-alpha/PixArt-XL-2-1024-MS")
     parser.add_argument("--data_root", required=True)
     parser.add_argument("--output_dir", default="runs/lora_train")

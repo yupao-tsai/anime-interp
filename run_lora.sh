@@ -1,38 +1,46 @@
 #!/bin/bash
 # Stage 1: LoRA training with palette conditioning.
-# Single GPU training (fits on 48GB A6000 with bf16 + 2b model).
+# Uses LTX-Video 19b model (local). Requires ~48GB VRAM with bf16.
 
 VENV=/storage/SSD2/users/yptsai/program/venv
-REPO=/storage/SSD2/users/yptsai/program/EdgeEnhancement
+REPO=/storage/SSD2/users/yptsai/program/anime_interp
 LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
-MODEL_DIR=/storage/SSD2/yptsai/models/ltx_video
-CKPT="$MODEL_DIR/ltx-video-2b-v0.9.1.safetensors"
-TEXT_ENC="$MODEL_DIR/pixart_text_encoder"
+# Model paths — 19b is available locally
+CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
+TEXT_ENC="PixArt-alpha/PixArt-XL-2-1024-MS"   # downloaded from HuggingFace Hub
 
-# Optional: fine-tuned decoder from Stage 0
-# DECODER_CKPT=/storage/SSD2/yptsai/exp_result_segmentation/ltx_vae_ft/decoder_final.pt
+# Optional: fine-tuned VAE decoder from Stage 0
+# DECODER_CKPT=$REPO/runs/vae_finetune/decoder_final.pt
 DECODER_CKPT=""
 
-DATA_ROOT="/path/to/anime/frames"   # <-- change this
-OUTPUT_DIR=/storage/SSD2/yptsai/exp_result_segmentation/ltx_lora
+DATA_ROOT="/path/to/anime/frames"   # set this to extracted frames directory
+OUTPUT_DIR=$REPO/runs/lora_train
 
-GPU=6
+GPU=0
 LR=1e-4
 TOTAL_STEPS=30000
 BATCH=1
 
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
-export PYTHONPATH="$REPO:$LTX_REPO:$PYTHONPATH"
+export PYTHONPATH="$LTX_REPO:$PYTHONPATH"
 
 source "$VENV/bin/activate"
+
+if [ "$DATA_ROOT" = "/path/to/anime/frames" ]; then
+    echo "ERROR: Set DATA_ROOT to your extracted frames directory."
+    echo "  Use: python data/preprocess.py batch --input_dir /videos --output_dir /frames"
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
 
 DECODER_ARG=""
 if [ -n "$DECODER_CKPT" ]; then
     DECODER_ARG="--decoder_ckpt $DECODER_CKPT"
 fi
 
-python "$REPO/model_interp/train_lora.py" \
+python "$REPO/train_lora.py" \
     --ckpt_path "$CKPT" \
     --text_encoder_path "$TEXT_ENC" \
     --data_root "$DATA_ROOT" \

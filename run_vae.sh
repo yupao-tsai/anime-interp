@@ -1,28 +1,36 @@
 #!/bin/bash
 # Stage 0: Fine-tune VAE decoder on anime frames.
-# Run on a single GPU; takes ~2-3 hours for 10k steps.
+# Encoder frozen, decoder trained for sharp edges and flat colors.
+# ~2-3 hours for 10k steps on a single A6000.
 
 VENV=/storage/SSD2/users/yptsai/program/venv
-REPO=/storage/SSD2/users/yptsai/program/EdgeEnhancement
+REPO=/storage/SSD2/users/yptsai/program/anime_interp
 LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
-MODEL_DIR=/storage/SSD2/yptsai/models/ltx_video
-CKPT="$MODEL_DIR/ltx-video-2b-v0.9.1.safetensors"
+CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
 
-DATA_ROOT="/path/to/anime/frames"   # <-- change this
-OUTPUT_DIR=/storage/SSD2/yptsai/exp_result_segmentation/ltx_vae_ft
+DATA_ROOT="/path/to/anime/frames"   # set this to extracted frames directory
+OUTPUT_DIR=$REPO/runs/vae_finetune
 
-GPU=6
+GPU=0
 LR=1e-4
 TOTAL_STEPS=10000
 BATCH=4
 
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
-export PYTHONPATH="$REPO:$LTX_REPO:$PYTHONPATH"
+export PYTHONPATH="$LTX_REPO:$PYTHONPATH"
 
 source "$VENV/bin/activate"
 
-python "$REPO/model_interp/train_vae.py" \
+if [ "$DATA_ROOT" = "/path/to/anime/frames" ]; then
+    echo "ERROR: Set DATA_ROOT to your extracted frames directory."
+    echo "  Use: python data/preprocess.py batch --input_dir /videos --output_dir /frames"
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+python "$REPO/train_vae.py" \
     --ckpt_path "$CKPT" \
     --data_root "$DATA_ROOT" \
     --output_dir "$OUTPUT_DIR" \
@@ -36,5 +44,5 @@ python "$REPO/model_interp/train_vae.py" \
     --w_perc 0.1 \
     --w_edge 0.5 \
     --save_interval 2000 \
-    --log_interval 100 \
+    --log_interval 50 \
     --gpu "$GPU"

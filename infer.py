@@ -36,7 +36,10 @@ from palette_encoder import PaletteEncoder
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_path", required=True)
+    parser.add_argument(
+        "--ckpt_path",
+        default="/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors",
+    )
     parser.add_argument("--lora_dir", required=True)
     parser.add_argument("--text_encoder_path", default="PixArt-alpha/PixArt-XL-2-1024-MS")
     parser.add_argument("--keyframe_dir", required=True, help="Folder with exactly 5 keyframes")
@@ -51,6 +54,9 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--precision", default="bf16")
+    parser.add_argument("--fps", type=int, default=12, help="FPS for exported video")
+    parser.add_argument("--export_mp4", action="store_true", help="Export snapped frames as MP4")
+    parser.add_argument("--export_gif", action="store_true", help="Export snapped frames as GIF")
     return parser.parse_args()
 
 
@@ -232,6 +238,24 @@ def main():
 
     print(f"Saved {len(pixels)} raw frames → {raw_dir}")
     print(f"Saved {len(snapped)} snapped frames → {snap_dir}")
+
+    # ── Export video ───────────────────────────────────────────────────────
+    if args.export_mp4 or args.export_gif:
+        import subprocess, tempfile, shutil as _shutil
+        from export_video import export_mp4, export_gif
+
+        snap_images = [
+            Image.fromarray((snapped[i].numpy() * 255).astype(np.uint8))
+            for i in range(len(snapped))
+        ]
+
+        if args.export_mp4:
+            mp4_path = os.path.join(args.output_dir, "output.mp4")
+            export_mp4(snap_images, mp4_path, fps=args.fps)
+
+        if args.export_gif:
+            gif_path = os.path.join(args.output_dir, "output.gif")
+            export_gif(snap_images, gif_path, fps=args.fps)
 
 
 if __name__ == "__main__":

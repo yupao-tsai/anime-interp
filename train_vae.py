@@ -54,7 +54,11 @@ class PerceptualLoss(nn.Module):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_path", required=True, help="Path to LTX safetensors")
+    parser.add_argument(
+        "--ckpt_path",
+        default="/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors",
+        help="Path to LTX safetensors",
+    )
     parser.add_argument("--data_root", required=True)
     parser.add_argument("--output_dir", default="runs/vae_finetune")
     parser.add_argument("--lr", type=float, default=1e-4)

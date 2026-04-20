@@ -1,0 +1,30 @@
+# Core deep learning
+torch>=2.1.0
+torchvision
+
+# LTX-Video (install from source)
+# git clone https://github.com/Lightricks/LTX-Video /path/to/LTX-Video
+# pip install -e /path/to/LTX-Video
+
+# HuggingFace ecosystem
+diffusers>=0.28.2
+transformers>=4.47.2,<4.52.0
+peft>=0.10.0
+accelerate
+safetensors
+huggingface-hub
+
+# Training utilities
+tensorboard
+einops
+timm
+
+# Data / image processing
+Pillow
+numpy
+scikit-learn
+imageio[ffmpeg]
+av
+
+# Evaluation
+scipy
