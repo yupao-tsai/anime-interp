@@ -30,12 +30,28 @@ from sklearn.cluster import MiniBatchKMeans
 
 # ── Stylization core ─────────────────────────────────────────────────────────
 
-def smooth_frame(img_bgr: np.ndarray, iterations: int = 2) -> np.ndarray:
-    """Edge-preserving smoothing to suppress gradients within color blocks."""
+def smooth_frame(img_bgr: np.ndarray, iterations: int = 3) -> np.ndarray:
+    """Edge-preserving smoothing to suppress gradients within color blocks.
+
+    Iterated bilateral filter — each pass strengthens flat regions while
+    preserving edges. 3 iterations empirically removes most subtle gradients
+    that would otherwise become 'ripple ring' artifacts after quantisation.
+    """
     out = img_bgr
     for _ in range(iterations):
-        out = cv2.bilateralFilter(out, d=9, sigmaColor=60, sigmaSpace=60)
+        out = cv2.bilateralFilter(out, d=9, sigmaColor=80, sigmaSpace=80)
     return out
+
+
+def cleanup_ripples(snapped: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+    """Median-filter post-process to remove ripple/concentric-ring artifacts.
+
+    K-means snap can split a single physical region into several thin bands
+    of close palette colors (looks like contour rings). Median filtering with
+    a small kernel collapses those bands into the dominant local color while
+    preserving sharp boundaries between genuinely different regions.
+    """
+    return cv2.medianBlur(snapped, kernel_size)
 
 
 def detect_line_mask(img_bgr: np.ndarray,
@@ -213,8 +229,13 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int,
             if img is None:
                 continue
             line_mask = detect_line_mask(img) if preserve_lines else None
-            smoothed = smooth_frame(img, iterations=2)
-            cel = apply_palette_vectorised(smoothed, palette, line_mask=line_mask)
+            smoothed = smooth_frame(img)
+            cel = apply_palette_vectorised(smoothed, palette, line_mask=None)
+            # Remove K-means ripples BEFORE overlaying lines (so median doesn't
+            # smear the black lines into surrounding pixels)
+            cel = cleanup_ripples(cel, kernel_size=5)
+            if line_mask is not None:
+                cel[line_mask] = (0, 0, 0)
             cv2.imwrite(str(out_path), cel)
 
         np.save(str(output_dir / "palette.npy"), palette)
