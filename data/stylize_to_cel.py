@@ -38,6 +38,25 @@ def smooth_frame(img_bgr: np.ndarray, iterations: int = 2) -> np.ndarray:
     return out
 
 
+def detect_line_mask(img_bgr: np.ndarray,
+                     dark_threshold: int = 80,
+                     canny_low: int = 30,
+                     canny_high: int = 100) -> np.ndarray:
+    """Detect anime line-art pixels: dark + on edges.
+
+    Returns a boolean mask where True indicates a line pixel that should be
+    preserved as pure black in the cel-stylised output. Without this step the
+    K-means quantiser merges thin dark lines into the surrounding color
+    region, destroying the cel-line look.
+    """
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, canny_low, canny_high)
+    # Dilate by 1 pixel — anti-aliased line halos sit just off the strict edge
+    edges = cv2.dilate(edges, np.ones((2, 2), np.uint8), iterations=1)
+    line_mask = (edges > 0) & (gray < dark_threshold)
+    return line_mask
+
+
 def _merge_close_colors(palette: np.ndarray, min_dist: float,
                         mode: str = "rgb") -> np.ndarray:
     """Merge palette colors that are too perceptually close.
@@ -81,17 +100,21 @@ def _merge_close_colors(palette: np.ndarray, min_dist: float,
 def fit_clip_palette(frame_paths: list, K: int, sample_per_frame: int = 5000,
                      max_samples: int = 100_000,
                      min_color_dist: float = 0.0,
-                     dist_mode: str = "rgb") -> np.ndarray:
+                     dist_mode: str = "rgb",
+                     exclude_lines: bool = True) -> np.ndarray:
     """Fit a single K-color palette across multiple frames of a clip.
 
-    We sub-sample pixels from a handful of evenly-spaced frames to keep K-means
+    Sub-samples pixels from a handful of evenly-spaced frames to keep K-means
     fast. The fitted palette is then applied to ALL frames → temporal stability.
 
-    If `min_gray_diff > 0`, colors whose grayscale difference is below the
-    threshold are merged. The final palette will have ≤ K colors.
+    If `exclude_lines=True`, line-art pixels are excluded from K-means input
+    so the palette captures only color regions (lines are reapplied as black
+    after quantisation, which preserves them faithfully).
+
+    If `min_color_dist > 0`, colors closer than the threshold are dropped
+    via greedy keep, leaving a ≤K palette of perceptually distinct colors.
     """
     n = len(frame_paths)
-    # Sample 5 evenly-spaced frames (or fewer if clip is short)
     n_samples = min(5, n)
     indices = np.linspace(0, n - 1, n_samples).astype(int)
 
@@ -100,10 +123,16 @@ def fit_clip_palette(frame_paths: list, K: int, sample_per_frame: int = 5000,
         img = cv2.imread(str(frame_paths[idx]))
         if img is None:
             continue
-        img = smooth_frame(img, iterations=1)
-        flat = img.reshape(-1, 3).astype(np.float32)
-        n_pick = min(sample_per_frame, len(flat))
-        pixels.append(flat[np.random.choice(len(flat), n_pick, replace=False)])
+        smoothed = smooth_frame(img, iterations=1)
+        if exclude_lines:
+            line_mask = detect_line_mask(img)
+            sample_pool = smoothed[~line_mask].reshape(-1, 3).astype(np.float32)
+        else:
+            sample_pool = smoothed.reshape(-1, 3).astype(np.float32)
+        if len(sample_pool) == 0:
+            continue
+        n_pick = min(sample_per_frame, len(sample_pool))
+        pixels.append(sample_pool[np.random.choice(len(sample_pool), n_pick, replace=False)])
 
     pixels = np.concatenate(pixels, axis=0)
     if len(pixels) > max_samples:
@@ -112,30 +141,49 @@ def fit_clip_palette(frame_paths: list, K: int, sample_per_frame: int = 5000,
     km = MiniBatchKMeans(n_clusters=K, n_init=3, max_iter=100,
                          batch_size=4096, random_state=0)
     km.fit(pixels)
-    palette = km.cluster_centers_.astype(np.float32)  # (K, 3) BGR float32
+    palette = km.cluster_centers_.astype(np.float32)
 
     if min_color_dist > 0:
         palette = _merge_close_colors(palette, min_color_dist, mode=dist_mode)
     return palette
 
 
-def apply_palette_vectorised(img_bgr: np.ndarray, palette: np.ndarray) -> np.ndarray:
-    """Snap each pixel to its nearest palette color.
-    Vectorised L2 distance via ||p||² + ||c||² − 2·p·c."""
+def apply_palette_vectorised(img_bgr: np.ndarray, palette: np.ndarray,
+                              line_mask: np.ndarray = None,
+                              line_color: tuple = (0, 0, 0)) -> np.ndarray:
+    """Snap each pixel to its nearest palette color, optionally overlay lines.
+
+    Vectorised L2 distance via ||p||² + ||c||² − 2·p·c.
+
+    If `line_mask` (HxW bool) is provided, those pixels are forced to
+    `line_color` (BGR) — preserves cel line art that K-means would otherwise
+    blur into the surrounding region.
+    """
     H, W = img_bgr.shape[:2]
-    flat = img_bgr.reshape(-1, 3).astype(np.float32)            # (N, 3)
-    p_sq = (flat * flat).sum(axis=1, keepdims=True)              # (N, 1)
-    c_sq = (palette * palette).sum(axis=1)                       # (K,)
-    pc = flat @ palette.T                                        # (N, K)
-    sq_dists = p_sq + c_sq[None, :] - 2 * pc                     # (N, K)
-    idx = sq_dists.argmin(axis=1)                                # (N,)
-    snapped = palette[idx].reshape(H, W, 3)
-    return snapped.astype(np.uint8)
+    flat = img_bgr.reshape(-1, 3).astype(np.float32)
+    p_sq = (flat * flat).sum(axis=1, keepdims=True)
+    c_sq = (palette * palette).sum(axis=1)
+    pc = flat @ palette.T
+    sq_dists = p_sq + c_sq[None, :] - 2 * pc
+    idx = sq_dists.argmin(axis=1)
+    snapped = palette[idx].reshape(H, W, 3).astype(np.uint8)
+
+    if line_mask is not None:
+        snapped[line_mask] = np.array(line_color, dtype=np.uint8)
+    return snapped
 
 
 def stylize_clip(input_dir: Path, output_dir: Path, K: int,
-                 min_color_dist: float = 50.0, dist_mode: str = "rgb") -> tuple:
+                 min_color_dist: float = 0.0, dist_mode: str = "rgb",
+                 preserve_lines: bool = True) -> tuple:
     """Stylize an entire clip with a single shared palette.
+
+    Pipeline per frame:
+      1. Detect line-art mask from the original frame (Canny + dark threshold)
+      2. Bilateral-smooth the frame (suppresses gradients in color regions)
+      3. Snap pixels to the clip's K-means palette (computed once over the clip,
+         excluding line pixels for a cleaner palette)
+      4. Force line pixels to pure black (preserves cel line art)
 
     Returns:
         (clip_name, n_frames_processed, error_or_None)
@@ -145,7 +193,7 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int,
         if len(frame_paths) == 0:
             return (input_dir.name, 0, "no frames")
 
-        # Skip if already done (idempotent batch runs)
+        # Skip if already done
         existing = list(output_dir.glob("*.png"))
         if len(existing) >= len(frame_paths):
             return (input_dir.name, len(existing), None)
@@ -153,8 +201,9 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int,
         output_dir.mkdir(parents=True, exist_ok=True)
 
         palette = fit_clip_palette(frame_paths, K=K,
-                                    min_color_dist=min_color_dist,
-                                    dist_mode=dist_mode)
+                                   min_color_dist=min_color_dist,
+                                   dist_mode=dist_mode,
+                                   exclude_lines=preserve_lines)
 
         for fp in frame_paths:
             out_path = output_dir / fp.name
@@ -163,11 +212,11 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int,
             img = cv2.imread(str(fp))
             if img is None:
                 continue
+            line_mask = detect_line_mask(img) if preserve_lines else None
             smoothed = smooth_frame(img, iterations=2)
-            cel = apply_palette_vectorised(smoothed, palette)
+            cel = apply_palette_vectorised(smoothed, palette, line_mask=line_mask)
             cv2.imwrite(str(out_path), cel)
 
-        # Save palette for inspection
         np.save(str(output_dir / "palette.npy"), palette)
 
         return (input_dir.name, len(frame_paths), None)
@@ -178,9 +227,10 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int,
 # ── Batch driver ─────────────────────────────────────────────────────────────
 
 def _worker(args):
-    input_dir, out_dir, K, min_color_dist, dist_mode = args
+    input_dir, out_dir, K, min_color_dist, dist_mode, preserve_lines = args
     return stylize_clip(input_dir, out_dir, K=K,
-                        min_color_dist=min_color_dist, dist_mode=dist_mode)
+                        min_color_dist=min_color_dist, dist_mode=dist_mode,
+                        preserve_lines=preserve_lines)
 
 
 def _find_clips_recursive(root: Path) -> list:
@@ -208,12 +258,13 @@ def _find_clips_recursive(root: Path) -> list:
 
 
 def batch_stylize(input_root: Path, output_root: Path, K: int,
-                  min_color_dist: float, dist_mode: str, workers: int):
+                  min_color_dist: float, dist_mode: str, preserve_lines: bool,
+                  workers: int):
     clips = _find_clips_recursive(input_root)
     print(f"Found {len(clips)} clip directories under {input_root}")
-    print(f"K={K} colors per palette (post-merge: ≤K, mode={dist_mode}, min_dist={min_color_dist})")
-    print(f"{workers} parallel workers")
-    print(f"Output: {output_root}")
+    print(f"K={K} colors max, min_dist={min_color_dist} ({dist_mode}), "
+          f"preserve_lines={preserve_lines}")
+    print(f"{workers} parallel workers, output: {output_root}")
 
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -221,7 +272,7 @@ def batch_stylize(input_root: Path, output_root: Path, K: int,
     for c in clips:
         rel = c.relative_to(input_root)
         out_dir = output_root / rel
-        args_list.append((c, out_dir, K, min_color_dist, dist_mode))
+        args_list.append((c, out_dir, K, min_color_dist, dist_mode, preserve_lines))
 
     ctx = get_context("spawn")
     with ctx.Pool(workers) as pool:
@@ -246,27 +297,32 @@ def main():
     parser.add_argument("--output_dir", help="Output for single clip")
     parser.add_argument("--batch", help="Root containing many clip directories")
     parser.add_argument("--output_root", help="Output root for batch mode")
-    parser.add_argument("--K", type=int, default=128, help="Palette size per clip")
-    parser.add_argument("--min_color_dist", type=float, default=50.0,
-                        help="Drop palette colors closer than this to any kept color. "
-                             "Default 50 in RGB-Euclidean space ensures any two kept "
-                             "palette colors are visually distinguishable.")
+    parser.add_argument("--K", type=int, default=128,
+                        help="Palette size cap per clip (K-means clusters)")
+    parser.add_argument("--min_color_dist", type=float, default=0.0,
+                        help="Optional: drop palette colors closer than this distance "
+                             "to any kept color. Default 0 keeps all K colors. "
+                             "Use ~30 for moderate de-duplication.")
     parser.add_argument("--dist_mode", choices=["rgb", "gray"], default="rgb",
-                        help="rgb=Euclidean RGB distance (preserves hue diversity); "
-                             "gray=BT.601 luminance only (stricter, ~6 colors max at 50)")
+                        help="Distance metric for the optional merge step.")
+    parser.add_argument("--no_preserve_lines", action="store_true",
+                        help="Disable line-art preservation (default ON: detect cel "
+                             "lines via Canny+darkness and overlay them as black).")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
+    preserve_lines = not args.no_preserve_lines
 
     if args.batch:
         assert args.output_root, "--output_root required for batch mode"
         batch_stylize(Path(args.batch), Path(args.output_root), K=args.K,
                       min_color_dist=args.min_color_dist, dist_mode=args.dist_mode,
-                      workers=args.workers)
+                      preserve_lines=preserve_lines, workers=args.workers)
     elif args.input_dir:
         assert args.output_dir, "--output_dir required for single mode"
         name, n, err = stylize_clip(Path(args.input_dir), Path(args.output_dir),
                                      K=args.K, min_color_dist=args.min_color_dist,
-                                     dist_mode=args.dist_mode)
+                                     dist_mode=args.dist_mode,
+                                     preserve_lines=preserve_lines)
         if err:
             print(f"ERROR: {err}")
         else:
