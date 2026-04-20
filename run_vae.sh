@@ -9,7 +9,7 @@ LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
 CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
 
-DATA_ROOT="/path/to/anime/frames"   # set this to extracted frames directory
+DATA_ROOT="/storage/SSD2/users/ryan/dataset/FlatColorData/GT"
 OUTPUT_DIR=$REPO/runs/vae_finetune
 
 GPU=0
@@ -21,12 +21,6 @@ export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export PYTHONPATH="$LTX_REPO:$PYTHONPATH"
 
 source "$VENV/bin/activate"
-
-if [ "$DATA_ROOT" = "/path/to/anime/frames" ]; then
-    echo "ERROR: Set DATA_ROOT to your extracted frames directory."
-    echo "  Use: python data/preprocess.py batch --input_dir /videos --output_dir /frames"
-    exit 1
-fi
 
 mkdir -p "$OUTPUT_DIR"
 

@@ -43,12 +43,20 @@ class AnimeClipDataset(Dataset):
     def _discover_clips(self, root: str):
         clips = []
         root = Path(root)
-        for subdir in sorted(root.iterdir()):
-            if subdir.is_dir():
+
+        def _scan(directory: Path, depth: int = 0):
+            children = sorted(d for d in directory.iterdir() if d.is_dir())
+            for subdir in children:
                 frames = sorted(subdir.glob("*.png")) + sorted(subdir.glob("*.jpg"))
                 if len(frames) >= self.num_frames:
                     clips.append(frames)
-        # Also accept flat directories of images if no subdirs found
+                elif depth < 1 and not frames:
+                    # No images here — recurse one level (handles GT/BONES/clip/ layout)
+                    _scan(subdir, depth + 1)
+
+        _scan(root)
+
+        # Accept flat directory of images as a single clip
         if not clips:
             frames = sorted(root.glob("*.png")) + sorted(root.glob("*.jpg"))
             if len(frames) >= self.num_frames:
@@ -56,24 +64,36 @@ class AnimeClipDataset(Dataset):
         return clips
 
     def _load_frame(self, path: Path) -> torch.Tensor:
-        img = Image.open(path).convert("RGB")
+        img = Image.open(path)
+        # Composite RGBA cels on white background (production frames are often transparency-masked)
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        else:
+            img = img.convert("RGB")
         img = img.resize((self.width, self.height), Image.BILINEAR)
         t = TVF.to_tensor(img)  # (3, H, W) [0,1]
         t = t * 2.0 - 1.0      # → [-1, 1]
         return t
 
     def _extract_palette(self, frames: list[torch.Tensor]) -> torch.Tensor:
-        # Sample pixels from middle frame for palette extraction
+        # Sample pixels from the middle frame for palette extraction
         mid = frames[len(frames) // 2]  # (3, H, W) in [-1, 1]
         pixels = mid.permute(1, 2, 0).reshape(-1, 3).numpy()
         pixels = (pixels + 1.0) / 2.0  # → [0, 1]
 
-        # Subsample for speed
-        idx = np.random.choice(len(pixels), min(10000, len(pixels)), replace=False)
-        pixels = pixels[idx]
+        # Exclude near-white background pixels (composited from alpha cels)
+        is_bg = (pixels > 0.95).all(axis=1)
+        fg_pixels = pixels[~is_bg]
+        if len(fg_pixels) < self.palette_k:
+            fg_pixels = pixels  # fallback if nearly all white
+
+        idx = np.random.choice(len(fg_pixels), min(10000, len(fg_pixels)), replace=False)
+        fg_pixels = fg_pixels[idx]
 
         kmeans = MiniBatchKMeans(n_clusters=self.palette_k, n_init=3, random_state=0)
-        kmeans.fit(pixels)
+        kmeans.fit(fg_pixels)
         palette = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)  # (K, 3) [0,1]
         return palette
 

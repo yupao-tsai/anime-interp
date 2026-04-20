@@ -14,7 +14,7 @@ TEXT_ENC="PixArt-alpha/PixArt-XL-2-1024-MS"   # downloaded from HuggingFace Hub
 # DECODER_CKPT=$REPO/runs/vae_finetune/decoder_final.pt
 DECODER_CKPT=""
 
-DATA_ROOT="/path/to/anime/frames"   # set this to extracted frames directory
+DATA_ROOT="/storage/SSD2/users/ryan/dataset/FlatColorData/GT"
 OUTPUT_DIR=$REPO/runs/lora_train
 
 GPU=0
@@ -26,12 +26,6 @@ export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export PYTHONPATH="$LTX_REPO:$PYTHONPATH"
 
 source "$VENV/bin/activate"
-
-if [ "$DATA_ROOT" = "/path/to/anime/frames" ]; then
-    echo "ERROR: Set DATA_ROOT to your extracted frames directory."
-    echo "  Use: python data/preprocess.py batch --input_dir /videos --output_dir /frames"
-    exit 1
-fi
 
 mkdir -p "$OUTPUT_DIR"
 
