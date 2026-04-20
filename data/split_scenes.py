@@ -105,7 +105,12 @@ def shot_motion_score(frame_paths: list) -> float:
 def split_clip(input_dir: Path, output_root: Path, threshold: float,
                min_shot_length: int, min_motion: float,
                link_mode: bool = True) -> tuple:
-    """Returns (clip_name, n_shots_kept, n_shots_dropped, error_or_None)."""
+    """Returns (clip_name, n_shots_kept, n_shots_dropped, error_or_None).
+
+    Output layout: {output_root}/{video_name}/{shot_name}/...
+    Shots from the same source video stay grouped together (needed for
+    downstream character / multi-angle extraction).
+    """
     try:
         frame_paths = sorted(input_dir.glob("*.png")) + sorted(input_dir.glob("*.jpg"))
         if len(frame_paths) < min_shot_length:
@@ -115,6 +120,7 @@ def split_clip(input_dir: Path, output_root: Path, threshold: float,
                             min_shot_length=min_shot_length)
         kept = 0
         dropped_static = 0
+        video_dir = output_root / input_dir.name
         for shot_idx, (s, e) in enumerate(shots):
             shot_paths = frame_paths[s:e + 1]
             if min_motion > 0:
@@ -122,8 +128,8 @@ def split_clip(input_dir: Path, output_root: Path, threshold: float,
                 if motion < min_motion:
                     dropped_static += 1
                     continue
-            shot_name = f"{input_dir.name}__shot{shot_idx:03d}_n{e-s+1}"
-            shot_dir = output_root / shot_name
+            shot_name = f"shot{shot_idx:03d}_n{e-s+1}"
+            shot_dir = video_dir / shot_name
             shot_dir.mkdir(parents=True, exist_ok=True)
 
             for src in shot_paths:

@@ -44,15 +44,19 @@ class AnimeClipDataset(Dataset):
         clips = []
         root = Path(root)
 
-        def _scan(directory: Path, depth: int = 0):
-            children = sorted(d for d in directory.iterdir() if d.is_dir())
+        def _scan(directory: Path, depth: int = 0, max_depth: int = 3):
+            try:
+                children = sorted(d for d in directory.iterdir() if d.is_dir())
+            except OSError:
+                return
             for subdir in children:
                 frames = sorted(subdir.glob("*.png")) + sorted(subdir.glob("*.jpg")) + sorted(subdir.glob("*.tga"))
                 if len(frames) >= self.num_frames:
                     clips.append(frames)
-                elif depth < 1 and not frames:
-                    # No images here — recurse one level (handles GT/BONES/clip/ layout)
-                    _scan(subdir, depth + 1)
+                elif depth < max_depth and not frames:
+                    # Recurse — handles GT/BONES/clip/ (depth 2)
+                    # and cel_shots/video/shot/frames (depth 2) layouts
+                    _scan(subdir, depth + 1, max_depth)
 
         _scan(root)
 

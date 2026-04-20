@@ -126,20 +126,48 @@ def stylize_clip(input_dir: Path, output_dir: Path, K: int) -> tuple:
 # ── Batch driver ─────────────────────────────────────────────────────────────
 
 def _worker(args):
-    input_dir, output_root, K = args
-    out_dir = Path(output_root) / input_dir.name
+    input_dir, out_dir, K = args
     return stylize_clip(input_dir, out_dir, K=K)
 
 
+def _find_clips_recursive(root: Path) -> list:
+    """Find all directories that contain image frames directly.
+    Supports both flat (root/clip/frames) and nested (root/video/shot/frames) layouts.
+    """
+    clips = []
+    def walk(d: Path):
+        try:
+            children = list(d.iterdir())
+        except OSError:
+            return
+        has_frames = any(
+            c.is_file() and c.suffix.lower() in (".png", ".jpg", ".jpeg")
+            for c in children
+        )
+        if has_frames:
+            clips.append(d)
+            return
+        for sub in sorted(children):
+            if sub.is_dir():
+                walk(sub)
+    walk(root)
+    return clips
+
+
 def batch_stylize(input_root: Path, output_root: Path, K: int, workers: int):
-    clips = [p for p in sorted(input_root.iterdir()) if p.is_dir()]
-    print(f"Found {len(clips)} clips under {input_root}")
+    clips = _find_clips_recursive(input_root)
+    print(f"Found {len(clips)} clip directories under {input_root}")
     print(f"K={K} colors per palette, {workers} parallel workers")
     print(f"Output: {output_root}")
 
     output_root.mkdir(parents=True, exist_ok=True)
 
-    args_list = [(c, output_root, K) for c in clips]
+    # Mirror the relative path structure in the output root
+    args_list = []
+    for c in clips:
+        rel = c.relative_to(input_root)
+        out_dir = output_root / rel
+        args_list.append((c, out_dir, K))
 
     ctx = get_context("spawn")
     with ctx.Pool(workers) as pool:
