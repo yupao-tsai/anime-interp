@@ -20,7 +20,8 @@ MAX_DIM=768         # resize long edge
 
 PER_CHANNEL_LIMIT=30   # max videos per channel (set higher for more data)
 MIN_DURATION=15        # skip clips shorter than 15s
-MAX_DURATION=300       # skip clips longer than 5min (full episodes too large)
+MAX_DURATION=1600      # ~26 min — accommodates full anime episodes (AniOne)
+                       # while still skipping multi-hour livestreams
 
 source "$VENV/bin/activate"
 mkdir -p "$OUT_VIDEO" "$OUT_FRAMES"
@@ -44,6 +45,9 @@ CHANNELS=(
     "PonyCanyon_Anime|https://www.youtube.com/channel/UCb-ekPowbBlQhyt7ZXPiu5Q/videos"
     "Bandai_Namco_Filmworks|https://www.youtube.com/channel/UCQ5URCSs1f5Cz9rh-cDGxNQ/videos"
     "Toei_Animation|https://www.youtube.com/channel/UCQYYekTKCb1y12sas08T6gQ/videos"
+    # AniOne — Medialink, full anime episodes (~24 min) accessible from Asia IPs.
+    # Higher per-channel cap because episodes are full length (not short PVs).
+    "AniOne|https://www.youtube.com/c/AniOneAnime/videos"
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
