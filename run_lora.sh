@@ -6,18 +6,20 @@ VENV=/storage/SSD2/users/yptsai/program/venv
 REPO=/storage/SSD2/users/yptsai/program/anime_interp
 LTX_REPO=/storage/SSD2/users/yptsai/program/LTX-Video
 
-# Model paths — 19b is available locally
-CKPT=/storage/SSD2/program/LTX-2/models/checkpoints/ltx-2-19b-dev.safetensors
-TEXT_ENC="PixArt-alpha/PixArt-XL-2-1024-MS"   # downloaded from HuggingFace Hub
+# LTX-Video 2b (v0.9.6-dev) — 6.3GB, compatible with our cloned LTX-Video repo.
+# The 19b local checkpoint is LTX-2 architecture (has audio cross-attention)
+# and incompatible with the cloned Transformer3DModel code path.
+CKPT=/storage/SSD2/yptsai/models/ltx_video/ltxv-2b-0.9.6-dev-04-25.safetensors
+TEXT_ENC="PixArt-alpha/PixArt-XL-2-1024-MS"   # downloads from HF on first use
 
-# Optional: fine-tuned VAE decoder from Stage 0
-# DECODER_CKPT=$REPO/runs/vae_finetune/decoder_final.pt
-DECODER_CKPT=""
+# Stage 0 VAE decoder checkpoint (shared across 2b/13b — same CausalVideoAutoencoder)
+DECODER_CKPT=$REPO/runs/vae_finetune/decoder_step_8000.pt
 
-DATA_ROOT="/storage/SSD2/users/ryan/dataset/FlatColorData/GT"
+# Combined cel dataset: 678 clips, 38,709 frames from 8 cel-style sources.
+DATA_ROOT=/storage/SSD3/yptsai/data/cel_combined
 OUTPUT_DIR=$REPO/runs/lora_train
 
-GPU=0
+GPU=1
 LR=1e-4
 TOTAL_STEPS=30000
 BATCH=1
