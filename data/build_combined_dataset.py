@@ -35,7 +35,14 @@ DATASETS = {
     "StudioSeven":         ("/storage/Internal_NAS/dataset/StudioSeven", 2),
     "BV_Studio":           ("/storage/Internal_NAS/dataset/BV_Studio", 1),
     "AnitaDataset":        ("/storage/Internal_NAS/dataset/AnitaDataset", 4),  # very deep nesting
+    # AnimeRun_v2: 3D-rendered cel-shaded animation. Each clip ships 4 color
+    # variants (color_1 .. color_4) of the same motion → built-in data aug.
+    "AnimeRun_train":      ("/storage/Internal_NAS/dataset/AnimeRun_v2/train/Frame_Anime", 2),
+    "AnimeRun_test":       ("/storage/Internal_NAS/dataset/AnimeRun_v2/test/Frame_Anime", 2),
 }
+
+# Subdirs to skip (lineart/grayscale base, not cel-shaded)
+SKIP_DIR_NAMES = {"original", "Flow", "Segment", "SegMatching", "contour"}
 
 FRAME_EXTS = {".png", ".jpg", ".jpeg", ".tga"}
 OUT_ROOT = Path("/storage/SSD3/yptsai/data/cel_combined")
@@ -49,8 +56,10 @@ def find_clips(root: Path, depth_hint: int, min_frames: int):
     clips = []
 
     def scan(d: Path, depth: int):
-        # Skip mask/sheet folders entirely
+        # Skip mask/sheet folders and known non-cel subdirs (lineart, flow, etc.)
         if any(d.name.endswith(suf) for suf in SKIP_SUFFIXES):
+            return
+        if d.name in SKIP_DIR_NAMES:
             return
         try:
             children = list(d.iterdir())
