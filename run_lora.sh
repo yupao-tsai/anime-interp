@@ -20,7 +20,7 @@ DATA_ROOT=/storage/SSD3/yptsai/data/cel_combined
 OUTPUT_DIR=$REPO/runs/lora_train
 
 GPU=1
-LR=1e-4
+LR=2e-5
 TOTAL_STEPS=30000
 BATCH=1
 
@@ -47,11 +47,11 @@ python "$REPO/train_lora.py" \
     --batch_size "$BATCH" \
     --height 256 \
     --width 384 \
-    --num_frames 17 \
+    --num_frames 33 \
     --palette_k 16 \
     --lora_rank 32 \
     --lora_alpha 16 \
-    --w_palette 0.3 \
+    --w_palette 0 \
     --save_interval 5000 \
     --log_interval 50 \
     --num_workers 4 \
